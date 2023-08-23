@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=sbopkg_gui
+GenericName=Package Manager
+Comment=Install and remove software
+Exec=kdesu sbopkg_gui
+Categories=System;
+Icon=system-software-update

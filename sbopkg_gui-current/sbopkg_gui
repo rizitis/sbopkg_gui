@@ -1,0 +1,922 @@
+#!/usr/bin/env python
+
+__author__ = 'Gernot Walzl'
+__date__ = '2021-05-12'
+__license__ = '''
+Copyright (C) 2016 Gernot Walzl
+
+Redistribution and use of this script, with or without modification,
+is permitted provided that the following conditions are met:
+
+1. Redistributions of this script must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR "AS IS" AND ANY
+EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED.
+IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
+INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
+TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+'''
+
+import sys
+import os
+import codecs
+import subprocess
+try:
+    from PyQt5.QtCore import Qt, QSettings, QVariant, QPoint, QSize
+    from PyQt5.QtWidgets import QApplication, QMainWindow, QToolBar, QAction
+    from PyQt5.QtWidgets import QWidget, QLabel, QLineEdit
+    from PyQt5.QtWidgets import QListWidget, QListWidgetItem
+    from PyQt5.QtWidgets import QTreeWidget, QTreeWidgetItem
+    from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QMessageBox
+    from PyQt5.QtWidgets import QVBoxLayout, QFormLayout, QSizePolicy
+    from PyQt5.QtWidgets import QSplitter, QScrollArea
+except ImportError:
+    from PyQt4.QtCore import Qt, QSettings, QVariant, QPoint, QSize
+    from PyQt4.QtGui import QApplication, QMainWindow, QToolBar, QAction
+    from PyQt4.QtGui import QWidget, QLabel, QLineEdit
+    from PyQt4.QtGui import QListWidget, QListWidgetItem
+    from PyQt4.QtGui import QTreeWidget, QTreeWidgetItem
+    from PyQt4.QtGui import QDialog, QDialogButtonBox, QMessageBox
+    from PyQt4.QtGui import QVBoxLayout, QFormLayout, QSizePolicy
+    from PyQt4.QtGui import QSplitter, QScrollArea
+
+
+class SlackBuild:
+
+    def __init__(self):
+        self.name = ''
+        self.location = ''
+        self.version = ''
+        self.requires = list()
+        self.description = ''
+        self.installed_version = ''
+        self.installed_fullname = ''
+
+
+class AppConfig:
+
+    def __init__(self, settings):
+        self.slackbuilds_dir = '/var/lib/sbopkg/SBo-git'
+        self.sbo_tag = '_SBo'
+        self.packages_dir = '/var/lib/pkgtools/packages'
+        self.terminal_app = 'xterm -e'
+
+        self.settings = settings
+        self.load_settings()
+
+    def get_str(self, key, default=None):
+        value = self.settings.value(key, default)
+        if type(value) is QVariant:
+            return str(value.toString())
+        return str(value)
+
+    def get_qpoint(self, key, default=None):
+        value = self.settings.value(key, default)
+        if type(value) is QVariant:
+            return value.toPoint()
+        return value
+
+    def get_qsize(self, key, default=None):
+        value = self.settings.value(key, default)
+        if type(value) is QVariant:
+            return value.toSize()
+        return value
+
+    def load_settings(self):
+        self.settings.beginGroup('Configuration')
+
+        if self.settings.contains('slackbuilds_dir'):
+            self.slackbuilds_dir = self.get_str('slackbuilds_dir')
+        else:
+            self.slackbuilds_dir = '/var/lib/sbopkg/SBo-git'
+            branches = list()
+            if os.path.isdir(self.slackbuilds_dir):
+                for name in os.listdir(self.slackbuilds_dir):
+                    if os.path.isdir(self.slackbuilds_dir+'/'+name):
+                        if os.path.isfile(
+                                self.slackbuilds_dir+'/'+name+'/SLACKBUILDS.TXT'):
+                            branches.append(name)
+            if len(branches) > 0:
+                branches.sort()
+                self.slackbuilds_dir += '/'+branches[-1]
+
+        if self.settings.contains('sbo_tag'):
+            self.sbo_tag = self.get_str('sbo_tag')
+        else:
+            self.sbo_tag = '_SBo'
+
+        if self.settings.contains('packages_dir'):
+            self.packages_dir = self.get_str('packages_dir')
+        else:
+            self.packages_dir = '/var/lib/pkgtools/packages'
+            if not os.path.isdir(self.packages_dir):
+                self.packages_dir = '/var/log/packages'
+
+        if self.settings.contains('terminal_app'):
+            self.terminal_app = self.get_str('terminal_app')
+        else:
+            self.terminal_app = 'xterm -e'
+            if os.path.isfile('/usr/bin/konsole'):
+                self.terminal_app = 'konsole --nofork -e'
+
+        self.settings.endGroup()
+
+    def to_dict(self):
+        cfg = dict()
+        cfg['slackbuilds_dir'] = self.slackbuilds_dir
+        cfg['sbo_tag'] = self.sbo_tag
+        cfg['packages_dir'] = self.packages_dir
+        cfg['terminal_app'] = self.terminal_app
+        return cfg
+
+
+class SettingsDialog(QDialog):
+
+    def __init__(self, config, parent=None):
+        QDialog.__init__(self, parent)
+
+        self.config = config
+
+        self.setWindowTitle('Settings')
+        self.setWindowFlags(
+            self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.qlayout = QVBoxLayout(self)
+
+        self.qwidget_form = QWidget(self)
+        self.qlayout_form = QFormLayout(self.qwidget_form)
+        self.qlineedits = dict()
+        for cfg_key, cfg_value in list(config.to_dict().items()):
+            qlabel = QLabel(cfg_key, self.qwidget_form)
+            qlineedit = QLineEdit(cfg_value, self.qwidget_form)
+            qlabel.setBuddy(qlineedit)
+            self.qlineedits[cfg_key] = qlineedit
+            self.qlayout_form.addRow(qlabel, qlineedit)
+        self.qlayout.addWidget(self.qwidget_form)
+
+        self.qbuttonbox = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel, Qt.Horizontal, self)
+        self.qbuttonbox.accepted.connect(self.on_accepted)
+        self.qbuttonbox.rejected.connect(self.reject)
+        self.qlayout.addWidget(self.qbuttonbox)
+
+    def sizeHint(self):
+        qsize_hint = QDialog.sizeHint(self)
+        return QSize(qsize_hint.width() * 1.5, qsize_hint.height())
+
+    def on_accepted(self):
+        self.config.settings.beginGroup('Configuration')
+        for key_qlineedit in self.qlineedits:
+            str_value = str(self.qlineedits[key_qlineedit].text())
+            self.config.settings.setValue(key_qlineedit, str_value)
+        self.config.settings.endGroup()
+        self.config.load_settings()
+        self.accept()
+
+
+class AbstractReadmeDialog(QDialog):
+
+    def __init__(self, config, slackbuild, parent=None):
+        QDialog.__init__(self, parent)
+
+        self.config = config
+
+        self.setWindowFlags(
+            self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.qlayout = QVBoxLayout(self)
+
+        qscrollarea = QScrollArea(self)
+        self.qlabel_readme = QLabel(qscrollarea)
+        self.qlabel_readme.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        qscrollarea.setWidget(self.qlabel_readme)
+        qscrollarea.setWidgetResizable(True)
+
+        readme = self.load_readme(slackbuild)
+        self.qlabel_readme.setText(readme)
+        self.qlayout.addWidget(qscrollarea)
+
+    def sizeHint(self):
+        qsize_hint = QDialog.sizeHint(self)
+        return QSize(qsize_hint.width() * 1.125, qsize_hint.height() * 1.125)
+
+    def load_readme(self, slackbuild):
+        readme = ''
+        filepath_readme = self.config.slackbuilds_dir + '/'
+        filepath_readme += slackbuild.location + '/README'
+        try:
+            with codecs.open(filepath_readme, 'r', 'utf-8') as f_readme:
+                readme = f_readme.read()
+        except IOError as err:
+            print(('IOError: ' + str(err)))
+            readme = 'Error: Unable to open "'+filepath_readme+'"'
+        return readme
+
+
+class ReadmeDialog(AbstractReadmeDialog):
+
+    def __init__(self, config, slackbuild, parent=None):
+        AbstractReadmeDialog.__init__(self, config, slackbuild, parent)
+        self.setWindowTitle(slackbuild.name + ' README')
+
+        self.qbuttonbox = QDialogButtonBox(
+            QDialogButtonBox.Ok, Qt.Horizontal, self)
+        self.qbuttonbox.accepted.connect(self.accept)
+        self.qlayout.addWidget(self.qbuttonbox)
+
+
+class OptionsDialog(AbstractReadmeDialog):
+
+    def __init__(self, config, slackbuild, parent=None):
+        AbstractReadmeDialog.__init__(self, config, slackbuild, parent)
+        self.setWindowTitle(slackbuild.name + ' options')
+
+        self.qlabel_options = QLabel('Options for '+slackbuild.name+':', self)
+        self.qlayout.addWidget(self.qlabel_options)
+
+        options = self.load_options(slackbuild)
+        self.qlineedit_options = QLineEdit(options, self)
+        self.qlayout.addWidget(self.qlineedit_options)
+        self.qlineedit_options.setFocus()
+
+        self.qbuttonbox = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel, Qt.Horizontal, self)
+        self.qbuttonbox.accepted.connect(self.accept)
+        self.qbuttonbox.rejected.connect(self.reject)
+        self.qlayout.addWidget(self.qbuttonbox)
+
+    def load_options(self, slackbuild):
+        options = ''
+        filepath_options = self.config.slackbuilds_dir + '/'
+        filepath_options += slackbuild.location + '/options.sbopkg'
+        try:
+            with open(filepath_options, 'r') as f_options:
+                options = f_options.read()
+        except IOError:
+            pass
+        return options
+
+    def get_options(self):
+        return str(self.qlineedit_options.text())
+
+
+class UpgradeDialog(QDialog):
+
+    def __init__(self, slackbuilds, slackbuilds_upgrade, parent=None):
+        QDialog.__init__(self, parent)
+        self.setWindowTitle('Upgrade')
+        self.setWindowFlags(
+            self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.qlayout = QVBoxLayout(self)
+
+        self.qlabel = QLabel('Choose packages to upgrade:', self)
+        self.qlayout.addWidget(self.qlabel)
+
+        self.qtree_upgrades = QTreeWidget(self)
+        header = QTreeWidgetItem(
+            ['',
+             'Package',
+             'Version',
+             'Installed',
+             'Required by (installed)'])
+        self.qtree_upgrades.setHeaderItem(header)
+        self.qtree_upgrades.setColumnWidth(0, 32)
+        self.qtree_upgrades.setRootIsDecorated(False)
+        for slackbuild in slackbuilds_upgrade:
+            str_required_by = ''
+            if slackbuilds:
+                required_by = self.find_required_by(
+                    slackbuilds, slackbuild.name)
+                str_required_by = ' '.join(required_by)
+            qitem = QTreeWidgetItem(
+                ['',
+                 slackbuild.name,
+                 slackbuild.version,
+                 slackbuild.installed_version,
+                 str_required_by])
+            qitem.setFlags(qitem.flags() | Qt.ItemIsUserCheckable)
+            qitem.setCheckState(0, Qt.Checked)
+            self.qtree_upgrades.addTopLevelItem(qitem)
+        self.qtree_upgrades.setSortingEnabled(True)
+        self.qtree_upgrades.sortByColumn(1, Qt.AscendingOrder)
+        self.qlayout.addWidget(self.qtree_upgrades)
+
+        self.qbuttonbox = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel, Qt.Horizontal, self)
+        self.qbuttonbox.accepted.connect(self.accept)
+        self.qbuttonbox.rejected.connect(self.reject)
+        self.qlayout.addWidget(self.qbuttonbox)
+
+    def sizeHint(self):
+        qsize_hint = QDialog.sizeHint(self)
+        return QSize(qsize_hint.width() * 2.0, qsize_hint.height())
+
+    def find_required_by(self, slackbuilds, sb_name):
+        result = list()
+        for name, slackbuild in list(slackbuilds.items()):
+            if slackbuild.installed_version:
+                if sb_name in slackbuild.requires:
+                    result.append(name)
+        return result
+
+    def get_upgrades(self):
+        upgrades = list()
+        for index in range(0, self.qtree_upgrades.topLevelItemCount()):
+            qitem = self.qtree_upgrades.topLevelItem(index)
+            if qitem.checkState(0) == Qt.Checked:
+                upgrades.append(str(qitem.text(1)))
+        return upgrades
+
+
+class MainWindow(QMainWindow):
+
+    def __init__(self, config, parent=None):
+        QMainWindow.__init__(self, parent)
+        self.setWindowTitle('sbopkg gui')
+
+        self.slackbuilds = dict()
+
+        self.config = config
+        config.settings.beginGroup('MainWindow')
+        self.resize(config.get_qsize('size', QSize(600, 400)))
+        self.move(config.get_qpoint('pos', QPoint(0, 0)))
+        config.settings.endGroup()
+
+        self.qtoolbar = QToolBar(self)
+        self.qaction_update = QAction('Update', self)
+        self.qaction_update.triggered.connect(self.on_action_update)
+        self.qtoolbar.addAction(self.qaction_update)
+        self.qaction_upgrade = QAction('Upgrade', self)
+        self.qaction_upgrade.triggered.connect(self.on_action_upgrade)
+        self.qtoolbar.addAction(self.qaction_upgrade)
+        self.qtoolbar.addSeparator()
+        self.qaction_install = QAction('Install', self)
+        self.qaction_install.triggered.connect(self.on_action_install)
+        self.qaction_install.setEnabled(False)
+        self.qtoolbar.addAction(self.qaction_install)
+        self.qaction_remove = QAction('Remove', self)
+        self.qaction_remove.triggered.connect(self.on_action_remove)
+        self.qaction_remove.setEnabled(False)
+        self.qtoolbar.addAction(self.qaction_remove)
+        self.qaction_options = QAction('Options', self)
+        self.qaction_options.triggered.connect(self.on_action_options)
+        self.qaction_options.setEnabled(False)
+        self.qtoolbar.addAction(self.qaction_options)
+        widget_empty = QWidget(self)
+        widget_empty.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.qtoolbar.addWidget(widget_empty)
+        self.qaction_settings = QAction('Settings', self)
+        self.qaction_settings.triggered.connect(self.on_action_settings)
+        self.qtoolbar.addAction(self.qaction_settings)
+        self.qaction_about = QAction('About', self)
+        self.qaction_about.triggered.connect(self.on_action_about)
+        self.qtoolbar.addAction(self.qaction_about)
+        self.addToolBar(Qt.TopToolBarArea, self.qtoolbar)
+
+        self.qwidget_central = QSplitter(self)
+        self.setCentralWidget(self.qwidget_central)
+
+        self.qwidget_left = QWidget(self.qwidget_central)
+        self.qlayout_left = QVBoxLayout(self.qwidget_left)
+        self.qlineedit_search = QLineEdit(self.qwidget_left)
+        self.qlineedit_search.textChanged.connect(
+            self.update_qtree_slackbuilds)
+        self.qlayout_left.addWidget(self.qlineedit_search)
+        self.qlist_categories = QListWidget(self.qwidget_central)
+        self.qlist_categories.itemSelectionChanged.connect(
+            self.update_qtree_slackbuilds)
+        self.qlayout_left.addWidget(self.qlist_categories)
+        self.qwidget_central.addWidget(self.qwidget_left)
+        self.qwidget_central.setStretchFactor(0, 1)
+
+        self.qwidget_right = QSplitter(Qt.Vertical, self.qwidget_central)
+        self.qtree_slackbuilds = QTreeWidget(self.qwidget_right)
+        self.qtree_slackbuilds.itemSelectionChanged.connect(
+            self.on_qtree_slackbuilds_selection_changed)
+        self.qtree_slackbuilds.itemDoubleClicked.connect(
+            self.on_qtree_slackbuilds_double_clicked)
+        header = QTreeWidgetItem(
+            ['Package', 'Version', 'Installed', 'Description'])
+        self.qtree_slackbuilds.setHeaderItem(header)
+        self.qtree_slackbuilds.setRootIsDecorated(False)
+        self.qtree_slackbuilds.sortByColumn(0, Qt.AscendingOrder)
+        self.qwidget_right.addWidget(self.qtree_slackbuilds)
+        qwidget_desc = QWidget(self.qwidget_right)
+        qlayout_desc = QVBoxLayout(qwidget_desc)
+        qscrollarea = QScrollArea(qwidget_desc)
+        self.qlabel_readme = QLabel(qscrollarea)
+        self.qlabel_readme.setTextInteractionFlags(
+            Qt.TextSelectableByMouse)
+        qscrollarea.setWidget(self.qlabel_readme)
+        qscrollarea.setWidgetResizable(True)
+        qlayout_desc.addWidget(qscrollarea)
+        self.qlabel_requires = QLabel(qwidget_desc)
+        self.qlabel_requires.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.qlabel_requires.hide()
+        qlayout_desc.addWidget(self.qlabel_requires)
+        self.qlabel_homepage = QLabel(qwidget_desc)
+        self.qlabel_homepage.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.qlabel_homepage.setOpenExternalLinks(True)
+        qlayout_desc.addWidget(self.qlabel_homepage)
+        self.qlabel_maintainer = QLabel(qwidget_desc)
+        self.qlabel_maintainer.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.qlabel_maintainer.setTextInteractionFlags(
+            Qt.TextSelectableByMouse)
+        qlayout_desc.addWidget(self.qlabel_maintainer)
+        self.qwidget_right.addWidget(qwidget_desc)
+        self.qwidget_central.addWidget(self.qwidget_right)
+        self.qwidget_central.setStretchFactor(1, 3)
+
+        self.init_slackbuilds()
+        self.update_qlist_categories()
+        self.update_qtree_slackbuilds()
+        self.show_last_changes()
+
+    def closeEvent(self, event):
+        self.config.settings.beginGroup('MainWindow')
+        self.config.settings.setValue('size', self.size())
+        self.config.settings.setValue('pos', self.pos())
+        self.config.settings.endGroup()
+
+    def init_slackbuilds(self):
+        self.slackbuilds = dict()
+        filepath_slackbuilds = self.config.slackbuilds_dir + '/SLACKBUILDS.TXT'
+        try:
+            with open(filepath_slackbuilds, 'r') as f_slackbuilds:
+                slackbuild = SlackBuild()
+                for line in f_slackbuilds:
+                    if line.startswith('SLACKBUILD NAME:'):
+                        if slackbuild.name:
+                            self.slackbuilds[slackbuild.name] = slackbuild
+                            slackbuild = SlackBuild()
+                        slackbuild.name = line[16:].strip()
+                    elif line.startswith('SLACKBUILD LOCATION:'):
+                        slackbuild.location = line[20:].strip()
+                    elif line.startswith('SLACKBUILD VERSION:'):
+                        slackbuild.version = line[19:].strip()
+                    elif line.startswith('SLACKBUILD REQUIRES:'):
+                        slackbuild.requires = line[20:].strip().split()
+                    elif line.startswith('SLACKBUILD SHORT DESCRIPTION:'):
+                        slackbuild.description = line[29:].strip()
+                if slackbuild.name:
+                    self.slackbuilds[slackbuild.name] = slackbuild
+        except IOError as err:
+            print(('IOError: ' + str(err)))
+            QMessageBox.critical(
+                self, 'Error',
+                'Unable to open "'+filepath_slackbuilds+'"',
+                QMessageBox.Cancel, QMessageBox.Cancel)
+
+        try:
+            for pkg in os.listdir(self.config.packages_dir):
+                elements = pkg.split('-')
+                name = elements[0]
+                for i in range(1, len(elements)-3):
+                    name += '-' + elements[i]
+                if name in self.slackbuilds:
+                    version = ''
+                    try:
+                        version = elements[len(elements)-3]
+                    except IndexError:
+                        pass
+                    self.slackbuilds[name].installed_version = version
+                    self.slackbuilds[name].installed_fullname = pkg
+        except OSError as err:
+            print(('OSError: ' + str(err)))
+            QMessageBox.critical(
+                self, 'Error',
+                'Unable to list contents of "'+self.config.packages_dir+'"',
+                QMessageBox.Cancel, QMessageBox.Cancel)
+
+    def get_search_text(self):
+        return str(self.qlineedit_search.text())
+
+    def get_selected_category(self):
+        result = None
+        if len(self.qlist_categories.selectedItems()) > 0:
+            qitem = self.qlist_categories.selectedItems()[0]
+            result = str(qitem.text())
+        return result
+
+    def get_selected_slackbuild_name(self):
+        result = None
+        if len(self.qtree_slackbuilds.selectedItems()) > 0:
+            qitem = self.qtree_slackbuilds.selectedItems()[0]
+            result = str(qitem.text(0))
+        return result
+
+    def update_qlist_categories(self):
+        categories = list()
+        categories.append('(all)')
+        categories.append('(installed)')
+        try:
+            for path in os.listdir(self.config.slackbuilds_dir):
+                if os.path.isdir(self.config.slackbuilds_dir+'/'+path):
+                    categories.append(path)
+        except OSError as err:
+            print(('OSError: ' + str(err)))
+        categories.sort()
+        self.qlist_categories.clear()
+        for category in categories:
+            qitem = QListWidgetItem(category)
+            self.qlist_categories.addItem(qitem)
+
+    def update_qtree_slackbuilds(self):
+        search = self.get_search_text()
+        category = self.get_selected_category()
+        self.qtree_slackbuilds.setSortingEnabled(False)
+        self.qtree_slackbuilds.clear()
+        for name, slackbuild in list(self.slackbuilds.items()):
+            if search:
+                if search.lower() not in name.lower():
+                    continue
+            if category and category != '(all)' and category != '(installed)':
+                if '/'+category+'/' not in slackbuild.location:
+                    continue
+            if category == '(installed)':
+                if not slackbuild.installed_version:
+                    continue
+            qitem = QTreeWidgetItem(
+                [slackbuild.name,
+                 slackbuild.version,
+                 slackbuild.installed_version,
+                 slackbuild.description])
+            self.qtree_slackbuilds.addTopLevelItem(qitem)
+        self.qtree_slackbuilds.setSortingEnabled(True)
+
+    def show_last_changes(self):
+        self.qaction_install.setEnabled(False)
+        self.qaction_remove.setEnabled(False)
+        self.qaction_options.setEnabled(False)
+        changes = ''
+        filepath_changelog = self.config.slackbuilds_dir + '/ChangeLog.txt'
+        try:
+            with codecs.open(filepath_changelog, 'r', 'utf-8') as f_changelog:
+                for line_change in f_changelog:
+                    if line_change.startswith('+--------'):
+                        break
+                    changes += line_change
+        except IOError as err:
+            print(('IOError: ' + str(err)))
+            changes = 'Error: Unable to open "'+filepath_changelog+'"'
+        self.qlabel_readme.setText(changes)
+        self.qlabel_requires.setText('')
+        self.qlabel_requires.hide()
+        self.qlabel_homepage.setText(
+            '<a href="http://slackbuilds.org/">http://slackbuilds.org/</a>')
+        self.qlabel_maintainer.setText('')
+
+    def on_qtree_slackbuilds_selection_changed(self):
+        sb_name = self.get_selected_slackbuild_name()
+        if sb_name:
+            slackbuild = self.slackbuilds[sb_name]
+            self.qaction_install.setEnabled(True)
+            self.qaction_options.setEnabled(True)
+            if slackbuild.installed_version:
+                self.qaction_remove.setEnabled(True)
+            else:
+                self.qaction_remove.setEnabled(False)
+            readme = ''
+            filepath_readme = self.config.slackbuilds_dir + '/'
+            filepath_readme += slackbuild.location + '/README'
+            try:
+                with codecs.open(filepath_readme, 'r', 'utf-8') as f_readme:
+                    readme = f_readme.read()
+            except IOError as err:
+                print(('IOError: ' + str(err)))
+                readme = 'Error: Unable to open "'+filepath_readme+'"'
+            self.qlabel_readme.setText(readme)
+            str_requires = ''
+            for require in slackbuild.requires:
+                installed = False
+                if require in self.slackbuilds:
+                    if self.slackbuilds[require].installed_version:
+                        installed = True
+                if installed:
+                    str_requires += '<font color="green">'+require+'</font> '
+                else:
+                    str_requires += require+' '
+            self.qlabel_requires.setText('Requires: '+str_requires)
+            if str_requires:
+                self.qlabel_requires.show()
+            else:
+                self.qlabel_requires.hide()
+            homepage = ''
+            maintainer = ''
+            email = ''
+            filepath_info = self.config.slackbuilds_dir + '/'
+            filepath_info += slackbuild.location+'/'+sb_name+'.info'
+            try:
+                with codecs.open(filepath_info, 'r', 'utf-8') as f_info:
+                    for line in f_info:
+                        line = line.strip()
+                        if line.startswith('HOMEPAGE='):
+                            homepage = line[10:-1]
+                        elif line.startswith('MAINTAINER='):
+                            maintainer = line[12:-1]
+                        elif line.startswith('EMAIL='):
+                            email = line[7:-1]
+            except IOError as err:
+                print(('IOError: ' + str(err)))
+            self.qlabel_homepage.setText(
+                'Homepage: <a href="'+homepage+'">'+homepage+'</a>')
+            self.qlabel_maintainer.setText(
+                'Maintainer: '+maintainer+' <'+email+'>')
+        else:
+            self.show_last_changes()
+
+    def on_qtree_slackbuilds_double_clicked(self):
+        sb_name = self.get_selected_slackbuild_name()
+        if sb_name:
+            slackbuild = self.slackbuilds[sb_name]
+            try:
+                subprocess.call(
+                    ['xdg-open',
+                     self.config.slackbuilds_dir + '/' + slackbuild.location])
+            except OSError as err:
+                print(('OSError: ' + str(err)))
+                QMessageBox.critical(
+                    self, 'Error',
+                    'Unable to call "xdg-open"',
+                    QMessageBox.Cancel, QMessageBox.Cancel)
+
+    def get_requires_rec(self, sb_name):
+        result = list()
+        if sb_name in self.slackbuilds:
+            slackbuild = self.slackbuilds[sb_name]
+            for require in slackbuild.requires:
+                if not require.startswith('%'):
+                    result += self.get_requires_rec(require)
+                    result.append(require)
+        return result
+
+    def filter_installed(self, requires):
+        result = list()
+        for require in requires:
+            if require in self.slackbuilds:
+                if not self.slackbuilds[require].installed_version:
+                    if require not in result:
+                        result.append(require)
+        return result
+
+    def find_upgrades(self):
+        upgrades = list()
+        for name, slackbuild in list(self.slackbuilds.items()):
+            if slackbuild.installed_version and \
+                    slackbuild.installed_fullname.endswith(self.config.sbo_tag):
+                if slackbuild.installed_version.startswith(slackbuild.version):
+                    slackbuild_build = 1
+                    filepath_slackbuild = self.config.slackbuilds_dir + '/'
+                    filepath_slackbuild += slackbuild.location + '/'
+                    filepath_slackbuild += name + '.SlackBuild'
+                    try:
+                        with open(filepath_slackbuild, 'r') as f_slackbuild:
+                            for line in f_slackbuild:
+                                line = line.strip()
+                                if line.startswith('BUILD='):
+                                    try:
+                                        slackbuild_build = int(line[15:-1])
+                                    except ValueError as err:
+                                        print(('ValueError: ' + str(err)))
+                                        slackbuild_build = 1
+                                    break
+                    except IOError as err:
+                        print(('IOError: ' + str(err)))
+                    if not slackbuild.installed_fullname.endswith(
+                            str(slackbuild_build) + self.config.sbo_tag):
+                        upgrades.append(slackbuild)
+                else:
+                    upgrades.append(slackbuild)
+        return upgrades
+
+    def show_readmes(self, sb_names):
+        for sb_name in sb_names:
+            if sb_name in self.slackbuilds:
+                slackbuild = self.slackbuilds[sb_name]
+                if '%README%' in slackbuild.requires:
+                    dlg_readme = ReadmeDialog(self.config, slackbuild, self)
+                    dlg_readme.exec_()
+
+    def on_action_update(self):
+        cmd = 'bash /opt/sbo-gen.sh && /usr/sbin/sbopkg -r && bash /opt/sbo-gen.sh'
+        try:
+            subprocess.call(self.config.terminal_app.split() + [cmd])
+            self.init_slackbuilds()
+            self.update_qlist_categories()
+            self.update_qtree_slackbuilds()
+            self.show_last_changes()
+        except OSError as err:
+            print(('OSError: ' + str(err)))
+            QMessageBox.critical(
+                self, 'Error',
+                'Unable to call "'+self.config.terminal_app+'"',
+                QMessageBox.Cancel, QMessageBox.Cancel)
+
+    def on_action_upgrade(self):
+        slackbuilds_upgrade = self.find_upgrades()
+        if len(slackbuilds_upgrade) > 0:
+            dlg_upgrade = UpgradeDialog(
+                self.slackbuilds, slackbuilds_upgrade, self)
+            if dlg_upgrade.exec_() == QDialog.Accepted:
+                upgrades = dlg_upgrade.get_upgrades()
+                if len(upgrades) > 0:
+                    requires = list()
+                    for upgrade in upgrades:
+                        requires += self.get_requires_rec(upgrade)
+                    requires = self.filter_installed(requires)
+                    cmd = '/usr/sbin/sbopkg -i '
+                    if len(requires) > 0:
+                        cmd += '"'+' '.join(requires)+' '+' '.join(upgrades)+'"'
+                    else:
+                        cmd += '"'+' '.join(upgrades)+'"'
+                    msg = 'The following packages will be upgraded:\n'
+                    msg += ' '.join(upgrades)+'\n'
+                    if len(requires) > 0:
+                        msg += '\n'
+                        msg += 'This requires the following additional packages to be installed:\n'
+                        msg += ' '.join(requires)+'\n'
+                    msg += '\n'
+                    msg += 'Do you want to execute the following command?\n'
+                    msg += cmd+'\n'
+                    ret = QMessageBox.question(
+                        self, 'Upgrade', msg,
+                        QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+                    if ret == QMessageBox.Yes:
+                        try:
+                            subprocess.call(
+                                self.config.terminal_app.split() + [cmd])
+                            self.init_slackbuilds()
+                            self.update_qtree_slackbuilds()
+                        except OSError as err:
+                            print(('OSError: ' + str(err)))
+                            QMessageBox.critical(
+                                self, 'Error',
+                                'Unable to call "'+self.config.terminal_app+'"',
+                                QMessageBox.Cancel, QMessageBox.Cancel)
+        else:
+            QMessageBox.information(
+                self, 'Upgrade',
+                'No upgrades found.')
+
+    def on_action_install(self):
+        sb_name = self.get_selected_slackbuild_name()
+        requires = self.get_requires_rec(sb_name)
+        requires = self.filter_installed(requires)
+        self.show_readmes(requires + [sb_name])
+        cmd = '/usr/sbin/sbopkg -i '
+        if len(requires) > 0:
+            cmd += '"'+' '.join(requires)+' '+sb_name+'"'
+        else:
+            cmd += sb_name
+        msg = ''
+        warning = False
+        installed_fullname = self.slackbuilds[sb_name].installed_fullname
+        if installed_fullname and \
+                not installed_fullname.endswith(self.config.sbo_tag):
+            warning = True
+            msg += sb_name + ' was installed from another source.\n'
+            msg += 'Package: ' + installed_fullname + '\n'
+            msg += '\n'
+            msg += 'Do you want to build and install ' + sb_name + ' anyway?\n'
+            msg += '(not recommended)\n'
+        else:
+            msg += 'Do you want to build and install ' + sb_name + '?\n'
+        if len(requires) > 0:
+            msg += '\n'
+            msg += sb_name+' requires the following additional packages to be installed:\n'
+            msg += ' '.join(requires)+'\n'
+        msg += '\n'
+        msg += 'Do you want to execute the following command?\n'
+        msg += cmd+'\n'
+        ret = QMessageBox.No
+        if warning:
+            ret = QMessageBox.warning(
+                self, 'Install '+sb_name, msg,
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        else:
+            ret = QMessageBox.question(
+                self, 'Install '+sb_name, msg,
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if ret == QMessageBox.Yes:
+            try:
+                subprocess.call(self.config.terminal_app.split() + [cmd])
+                self.init_slackbuilds()
+                self.update_qtree_slackbuilds()
+            except OSError as err:
+                print(('OSError: ' + str(err)))
+                QMessageBox.critical(
+                    self, 'Error',
+                    'Unable to call "'+self.config.terminal_app+'"',
+                    QMessageBox.Cancel, QMessageBox.Cancel)
+
+    def on_action_remove(self):
+        sb_name = self.get_selected_slackbuild_name()
+        required_by = list()
+        for name, slackbuild in list(self.slackbuilds.items()):
+            if slackbuild.installed_version:
+                if sb_name in slackbuild.requires:
+                    required_by.append(slackbuild.name)
+        if len(required_by) > 0:
+            msg = sb_name+' is required by the following packages:\n'
+            msg += ' '.join(required_by)+'\n'
+            QMessageBox.critical(
+                self, 'Remove '+sb_name, msg,
+                QMessageBox.Cancel, QMessageBox.Cancel)
+        else:
+            cmd = 'sudo /sbin/removepkg '+sb_name
+            msg = ''
+            warning = False
+            installed_fullname = self.slackbuilds[sb_name].installed_fullname
+            if installed_fullname and \
+                    not installed_fullname.endswith(self.config.sbo_tag):
+                warning = True
+                msg += sb_name + ' was installed from another source.\n'
+                msg += 'Package: ' + installed_fullname + '\n'
+                msg += '\n'
+                msg += 'Do you want to remove ' + sb_name + ' anyway?\n'
+                msg += '(not recommended)\n'
+            else:
+                msg += 'Do you want to remove '+sb_name+'?\n'
+            msg += '\n'
+            msg += 'Do you want to execute the following command?\n'
+            msg += cmd+'\n'
+            ret = QMessageBox.No
+            if warning:
+                ret = QMessageBox.warning(
+                    self, 'Remove '+sb_name, msg,
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            else:
+                ret = QMessageBox.question(
+                    self, 'Remove '+sb_name, msg,
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if ret == QMessageBox.Yes:
+                try:
+                    subprocess.call(self.config.terminal_app.split() + [cmd])
+                    self.init_slackbuilds()
+                    self.update_qtree_slackbuilds()
+                except OSError as err:
+                    print(('OSError: ' + str(err)))
+                    QMessageBox.critical(
+                        self, 'Error',
+                        'Unable to call "'+self.config.terminal_app+'"',
+                        QMessageBox.Cancel, QMessageBox.Cancel)
+
+    def on_action_options(self):
+        sb_name = self.get_selected_slackbuild_name()
+        slackbuild = self.slackbuilds[sb_name]
+        dlg_options = OptionsDialog(self.config, slackbuild, self)
+        if dlg_options.exec_():
+            options = dlg_options.get_options()
+            filepath_options = self.config.slackbuilds_dir + '/'
+            filepath_options += slackbuild.location + '/options.sbopkg'
+            cmd = 'sudo bash -c "echo -n \''+options+'\' > '+filepath_options+'"'
+            msg = 'Do you want to execute the following command?\n'
+            msg += cmd + '\n'
+            ret = QMessageBox.question(
+                self, 'Options '+sb_name, msg,
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+            if ret == QMessageBox.Yes:
+                try:
+                    subprocess.call(self.config.terminal_app.split() + [cmd])
+                except OSError as err:
+                    print(('OSError: ' + str(err)))
+                    QMessageBox.critical(
+                        self, 'Error',
+                        'Unable to call "'+self.config.terminal_app+'"',
+                        QMessageBox.Cancel, QMessageBox.Cancel)
+
+    def on_action_settings(self):
+        dlg_settings = SettingsDialog(self.config, self)
+        if dlg_settings.exec_():
+            self.init_slackbuilds()
+            self.update_qlist_categories()
+            self.update_qtree_slackbuilds()
+            self.show_last_changes()
+
+    def on_action_about(self):
+        msg = 'sbopkg gui\n'+__date__+'\n'+__license__
+        QMessageBox.about(self, 'About sbopkg gui', msg)
+
+
+def main():
+    app = QApplication(sys.argv)
+    settings = QSettings('sbopkg_gui')
+    config = AppConfig(settings)
+    window = MainWindow(config)
+    window.show()
+    sys.exit(app.exec_())
+
+
+if __name__ == '__main__':
+    main()
