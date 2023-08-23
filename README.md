@@ -18,7 +18,7 @@ as root execute script
 ```
 ./install_sbopkg_gui.sh
 ```
-It will create a binnary package in /tmp
+It will create a binary package in /tmp
 ```
 upgradepkg --install-new --reinstall /tmp/sbopkg_gui-current-x86_64-1_rtz.tgz
 ```
