@@ -8,6 +8,7 @@ THIS is sbopkg_gui for SLACKWARE **CURRENT** ONLY (ponce repo) SBo-git
 * This is **a patched version** of sbopkg_gui (http://gernot-walzl.at/index.php?nav=Slackware%2Fsbopkg_gui) 
 * This patched version is for Slackware current **ONLY**!!!  supposed that your sbopkg is rsync with **ponce (SBo-git) repo**.
 
+![sbopkg_gui-current](https://github.com/rizitis/sbopkg_gui/blob/main/sbopkg_gui-current.png)
 
 # INSTALL
 ```
