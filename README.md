@@ -1,5 +1,5 @@
-# sbopkg_gui-current
-sbopkg_gui for SLACKWARE CURRENT (ponce repo) SBo-git
+# sbopkg_gui
+THIS is sbopkg_gui for SLACKWARE CURRENT ONLY (ponce repo) SBo-git
 
 ```
 # sbopkg_gui is a graphical user interface for sbopkg,
