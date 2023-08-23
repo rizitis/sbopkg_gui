@@ -25,5 +25,5 @@ upgradepkg --install-new --reinstall /tmp/sbopkg_gui-current-x86_64-1_rtz.tgz
 
 # REQUIRED
 ```
-Full Slackware installation and sbopkg focuss to SBo-git
+Full Slackware installation and sbopkg rsync to SBo-git
 ```
