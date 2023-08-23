@@ -85,6 +85,10 @@ cat slack-desc > $PKG/install/slack-desc
 cat slack-required > $PKG/install/slac-required
 cat doinst.sh > $PKG/install/doinst.sh
 
+mkdir -p $PKG/opt
+cat sbo-gen.sh > $PKG/opt/sbo-gen.sh
+chmod +x $PKG/opt/sbo-gen.sh
+
 mkdir -p $PKG/usr/doc/$PRGNAM-$VERSION
 cat $CWD/install_$PRGNAM.sh > $PKG/usr/doc/$PRGNAM-$VERSION/$PRGNAM.SlackBuild
 
