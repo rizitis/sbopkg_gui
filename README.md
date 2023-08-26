@@ -11,19 +11,7 @@ THIS is sbopkg_gui for SLACKWARE **CURRENT** ONLY (ponce repo) SBo-git
 
 ![sbopkg_gui-current](https://github.com/rizitis/sbopkg_gui/blob/main/sbopkg_gui-current.png)
 
-# INSTALL
-```
-wget -c https://raw.githubusercontent.com/rizitis/sbopkg_gui/main/install_sbopkg_gui.sh
-chmod +x install_sbopkg_gui.sh
-```
-as root execute script
-```
-./install_sbopkg_gui.sh
-```
-It will create a binary package in /tmp
-```
-upgradepkg --install-new --reinstall /tmp/sbopkg_gui-current-x86_64-1_rtz.tgz
-```
+
 
 # REQUIRED
 ```
