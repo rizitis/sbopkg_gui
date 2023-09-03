@@ -17,3 +17,9 @@ THIS is sbopkg_gui for SLACKWARE **CURRENT** ONLY (ponce repo) SBo-git
 ```
 Full Slackware installation and sbopkg rsync to SBo-git
 ```
+### TODO
+Its not working properly if you run it from sbopkg_gui.desktop
+Suggested way to run it is from konsole as root:
+```
+sbopkg_gui
+```
